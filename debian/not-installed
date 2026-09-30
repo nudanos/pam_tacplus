@@ -1,0 +1,6 @@
+usr/lib/*/libtac.la
+usr/lib/*/security/pam_tacplus.la
+# dh_installdocs installs these from the source tree (debian/docs)
+usr/share/doc/libpam-tacplus/AUTHORS
+usr/share/doc/libpam-tacplus/ChangeLog
+usr/share/doc/libpam-tacplus/README.md

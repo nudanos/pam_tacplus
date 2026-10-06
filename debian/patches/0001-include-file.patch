@@ -1,0 +1,143 @@
+Description: include=FILE reads servers and secrets from a root-only file
+ pam_tacplus takes its shared secret only as a module argument, which puts
+ it in world-readable /etc/pam.d. include=FILE adds the server=, secret= and
+ timeout= lines of FILE to the arguments, as the Cumulus and VyOS forks do;
+ NuDanOS keeps the file root-only (0600). A make check test covers it.
+Author: NuDanOS Maintainers <jon@fernandez.tech>
+Forwarded: no
+Last-Update: 2026-10-06
+---
+--- a/support.c	2026-10-06 06:56:48
++++ b/support.c	2026-10-06 06:59:29
+@@ -245,6 +245,57 @@
+     }
+ }
+ 
++/* NuDanOS: include=FILE adds the server=, secret= and timeout= lines of FILE
++ * (blank lines and # comments skipped) to the module arguments, as the
++ * Cumulus/VyOS pam_tacplus does, so a shared secret can live in a root-only
++ * file instead of world-readable /etc/pam.d. *out holds copies until
++ * free_args(); a missing file is logged and contributes nothing. */
++static int expand_includes(int argc, const char **argv, char ***out) {
++    int n = 0, cap = argc + 16;
++    char **list = calloc(cap, sizeof(char *));
++
++    if (list == NULL)
++        return -1;
++    for (; argc-- > 0; ++argv) {
++        if (strncmp(*argv, "include=", 8) != 0) {
++            if (n + 1 >= cap && (list = realloc(list, (cap *= 2) * sizeof(char *))) == NULL)
++                return -1;
++            list[n++] = strdup(*argv);
++            continue;
++        }
++        FILE *f = fopen(*argv + 8, "r");
++        if (f == NULL) {
++            _pam_log(LOG_ERR, "cannot read %s: %m", *argv + 8);
++            continue;
++        }
++        char line[512];
++        while (fgets(line, sizeof line, f) != NULL) {
++            line[strcspn(line, "\r\n")] = '\0';
++            if (line[0] == '\0' || line[0] == '#')
++                continue;
++            if (n + 1 >= cap && (list = realloc(list, (cap *= 2) * sizeof(char *))) == NULL) {
++                fclose(f);
++                return -1;
++            }
++            list[n++] = strdup(line);
++        }
++        fclose(f);
++    }
++    list[n] = NULL;
++    *out = list;
++    return n;
++}
++
++static void free_args(char **list) {
++    char **p;
++
++    if (list == NULL)
++        return;
++    for (p = list; *p != NULL; p++)
++        free(*p);
++    free(list);
++}
++
+ int _pam_parse(int argc, const char **argv) {
+     int ctrl = 0;
+     const char *current_secret = NULL;
+@@ -261,6 +312,13 @@
+     tac_prompt[0] = 0;
+     tac_login[0] = 0;
+ 
++    char **expanded = NULL;
++    int n_expanded = expand_includes(argc, argv, &expanded);
++    if (n_expanded >= 0) {
++        argc = n_expanded;
++        argv = (const char **)expanded;
++    }
++
+     for (ctrl = 0; argc-- > 0; ++argv) {
+         if (!strcmp(*argv, "debug")) { /* all */
+             ctrl |= PAM_TAC_DEBUG;
+@@ -384,6 +442,7 @@
+         _pam_log(LOG_DEBUG, "tac_login='%s'", tac_login);
+     }
+ 
++    free_args(expanded);
+     return ctrl;
+ }    /* _pam_parse */
+ 
+--- a/Makefile.am	2026-10-06 06:56:48
++++ b/Makefile.am	2026-10-06 06:56:59
+@@ -78,3 +78,10 @@
+ 
+ test:
+ 	bash -x test.sh
++
++# NuDanOS: include= reads servers and secrets from a root-only file
++check_PROGRAMS = include_test
++include_test_SOURCES = test/include_test.c support.c
++include_test_CFLAGS = $(AM_CFLAGS) -I $(top_srcdir)/libtac/include
++include_test_LDADD = libtac.la -lpam
++TESTS = include_test
+--- a/test/include_test.c	1969-12-31 17:00:00
++++ b/test/include_test.c	2026-10-06 06:56:49
+@@ -0,0 +1,36 @@
++/* SPDX-License-Identifier: LGPL-3.0-or-later
++ * include=FILE reads server=, secret= and timeout= lines from a root-only
++ * file, so the shared secret need not sit in world-readable /etc/pam.d. */
++#include "config.h"
++#include "support.h"
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <unistd.h>
++
++int main(void) {
++    char path[] = "/tmp/tacplus_servers_XXXXXX";
++    int fd = mkstemp(path);
++    FILE *f = fdopen(fd, "w");
++    fprintf(f, "# NuDanOS TACACS+ servers\nsecret=s3cr3t\nserver=127.0.0.1\n\ntimeout=7\n");
++    fclose(f);
++    char arg[300];
++    snprintf(arg, sizeof arg, "include=%s", path);
++    const char *argv[] = {"login=login", arg};
++    _pam_parse(2, argv);
++    unlink(path);
++    if (tac_srv_no != 1 || tac_srv[0].key == NULL || strcmp(tac_srv[0].key, "s3cr3t") != 0 ||
++        tac_timeout != 7 || strcmp(tac_login, "login") != 0) {
++        printf("include_test: FAIL: servers=%u key=%s timeout=%lu login=%s\n", tac_srv_no,
++               tac_srv[0].key ? tac_srv[0].key : "(null)", tac_timeout, tac_login);
++        return 1;
++    }
++    const char *missing[] = {"include=/nonexistent/tacplus_servers"};
++    _pam_parse(1, missing);
++    if (tac_srv_no != 0) {
++        printf("include_test: FAIL: a missing include file gave %u servers\n", tac_srv_no);
++        return 1;
++    }
++    printf("include_test: OK\n");
++    return 0;
++}

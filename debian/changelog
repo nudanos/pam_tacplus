@@ -1,3 +1,12 @@
+libpam-tacplus (1.6.1-1danos2) trixie; urgency=medium
+
+  * include=FILE reads server=, secret= and timeout= lines from a root-only
+    file, so the TACACS+ shared secret need not sit in world-readable
+    /etc/pam.d (debian/patches/0001-include-file.patch); make check runs
+    its test
+
+ -- NuDanOS Maintainers <jon@fernandez.tech>  Tue, 06 Oct 2026 07:00:24 -0700
+
 libpam-tacplus (1.6.1-1danos1) unstable; urgency=medium
 
   [ Paweł Krawczyk ]

@@ -24,7 +24,10 @@ override_dh_install:
 	cp debian/tacplus debian/libpam-tacplus/usr/share/pam-configs/
 	dh_install
 
+# NuDanOS: make check runs only debian/patches/0001's include_test. The
+# upstream PAM test below needs root and a running TACACS+ server.
 override_dh_auto_test:
+	dh_auto_test
 # Disabled on DANOS
 #	mkdir -p /etc/pam.d
 #	sudo cp test/test /etc/pam.d/test

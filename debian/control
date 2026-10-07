@@ -5,7 +5,8 @@ Maintainer: NuDanOS Maintainers <jon@fernandez.tech>
 Build-Depends: debhelper-compat (= 13),
  libpam-dev,
  dh-autoreconf,
- autoconf-archive
+ autoconf-archive,
+ libtacplus-map-dev
 Standards-Version: 4.7.2
 Homepage: https://github.com/jeroennijhof/pam_tacplus
 Rules-Requires-Root: no

@@ -1,3 +1,11 @@
+libpam-tacplus (1.6.1-1danos3) trixie; urgency=medium
+
+  * Record the TACACS+ session mapping for nss_tacplus through libtacplus-map
+    (update_mapuser after authorization, cleared at session close), so a
+    TACACS+ login gets the groups of its local account tacacsN.
+
+ -- NuDanOS Maintainers <jon@fernandez.tech>  Tue, 06 Oct 2026 22:19:04 -0700
+
 libpam-tacplus (1.6.1-1danos2) trixie; urgency=medium
 
   * include=FILE reads server=, secret= and timeout= lines from a root-only

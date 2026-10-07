@@ -1,0 +1,108 @@
+Description: record the TACACS+ session mapping for nss_tacplus
+ After authorization, call libtacplus-map's update_mapuser() with the
+ priv-lvl the server returned, and clear the record at session close
+ (__update_loguid), as the Cumulus and VyOS forks of pam_tacplus do.
+ nss_tacplus maps a TACACS+ user to the local account tacacsN only through
+ this record: without it a TACACS+ login gets none of tacacsN's groups and
+ its uid never maps back to the TACACS+ name. test/map_test.sh checks that
+ the module is linked with libtacplus_map and calls both entry points.
+Author: NuDanOS Maintainers <jon@fernandez.tech>
+Forwarded: not-needed
+
+diff --git a/Makefile.am b/Makefile.am
+index f10399f..041ed2f 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -62,7 +62,7 @@ support.h \
+ support.c
+ pam_tacplus_la_CFLAGS = $(AM_CFLAGS) -I $(top_srcdir)/libtac/include -I $(top_srcdir)/libtac/lib
+ pam_tacplus_la_LDFLAGS = -module -avoid-version
+-pam_tacplus_la_LIBADD = libtac.la
++pam_tacplus_la_LIBADD = libtac.la -ltacplus_map
+ 
+ EXTRA_DIST = pam_tacplus.spec libtac.pc.in
+ if DOC
+@@ -84,4 +84,8 @@ check_PROGRAMS = include_test
+ include_test_SOURCES = test/include_test.c support.c
+ include_test_CFLAGS = $(AM_CFLAGS) -I $(top_srcdir)/libtac/include
+ include_test_LDADD = libtac.la -lpam
+-TESTS = include_test
++TESTS = include_test test/map_test.sh
++# a quilt patch cannot make the script executable
++TEST_EXTENSIONS = .sh
++SH_LOG_COMPILER = $(SHELL)
++EXTRA_DIST += test/map_test.sh
+diff --git a/pam_tacplus.c b/pam_tacplus.c
+index b69e3d0..094b599 100644
+--- a/pam_tacplus.c
++++ b/pam_tacplus.c
+@@ -22,6 +22,9 @@
+ #include "pam_tacplus.h"
+ #include "support.h"
+ 
++/* NuDanOS: the session record nss_tacplus maps TACACS+ users through */
++#include <tacplus/map_tacplus_user.h>
++
+ #include <stdlib.h>     /* malloc */
+ #include <stdio.h>
+ #include <syslog.h>
+@@ -700,6 +703,19 @@ int pam_sm_acct_mgmt(pam_handle_t *pamh, int UNUSED(flags), int argc,
+ 		attr = attr->next;
+ 	}
+ 
++	/* NuDanOS: record the session mapping (TACACS+ user -> local account
++	 * tacacsN of its privilege level) that nss_tacplus reads, so the login
++	 * gets that account's groups and its uid maps back to the TACACS+ name.
++	 * The priv-lvl attribute was just put in the PAM environment above. */
++	{
++		const char *lvl = pam_getenv(pamh, "PRIV_LVL");
++		unsigned long priv = lvl ? strtoul(lvl, NULL, 10) : 0;
++
++		if (priv > 15)
++			priv = 15;
++		update_mapuser(user, (unsigned) priv, r_addr, 0);
++	}
++
+ 	/* free returned attributes */
+ 	if (arep.attr != NULL)
+ 		tac_free_attrib(&arep.attr);
+@@ -751,6 +767,11 @@ int pam_sm_open_session(pam_handle_t *pamh, int UNUSED(flags), int argc,
+  */
+ PAM_EXTERN
+ int pam_sm_close_session(pam_handle_t *pamh, int UNUSED(flags), int argc, const char **argv) {
++	char *user = _pam_get_user(pamh);
++
++	/* NuDanOS: the session is over; clear its mapping record */
++	if (user != NULL)
++		__update_loguid(user);
+ 
+ 	return _pam_account(pamh, argc, argv, TAC_PLUS_ACCT_FLAG_STOP, NULL);
+ } /* pam_sm_close_session */
+diff --git a/test/map_test.sh b/test/map_test.sh
+new file mode 100644
+index 0000000..a796d5b
+--- /dev/null
++++ b/test/map_test.sh
+@@ -0,0 +1,22 @@
++#!/bin/sh
++# NuDanOS: nss_tacplus maps a TACACS+ user to its local account tacacsN
++# (groups, uid -> name) only through the session record that libtacplus-map
++# keeps. pam_tacplus must write it after authorization (update_mapuser) and
++# clear it at logout (__update_loguid), or a TACACS+ login gets none of its
++# privilege level's groups.
++set -eu
++so=.libs/pam_tacplus.so
++[ -f "$so" ] || { echo "map_test: $so not built" >&2; exit 1; }
++fail=0
++for sym in update_mapuser __update_loguid; do
++    if ! nm -D --undefined-only "$so" | grep -qw "$sym"; then
++        echo "map_test: pam_tacplus does not call $sym" >&2
++        fail=1
++    fi
++done
++if ! objdump -p "$so" | grep -q 'NEEDED.*libtacplus_map'; then
++    echo "map_test: pam_tacplus is not linked with libtacplus_map" >&2
++    fail=1
++fi
++[ $fail = 0 ] && echo "map_test: OK"
++exit $fail
